@@ -1,25 +1,9 @@
-# Deploy to Azure Kubernetes Service
-# Build and push image to Azure Container Registry; Deploy to Azure Kubernetes Service
-# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
 
-trigger:
-- master
 
-resources:
-- repo: self
-
-variables:
-
-  # Container registry service connection established during pipeline creation
-  dockerRegistryServiceConnection: '{{ containerRegistryConnection.Id }}'
-  imageRepository: '{{#toAlphaNumericString imageRepository 50}}{{/toAlphaNumericString}}'
-  containerRegistry: '{{ containerRegistryConnection.Authorization.Parameters.loginServer }}'
-  dockerfilePath: '**/Dockerfile'
-  tag: '$(Build.BuildId)'
-  imagePullSecret: '{{#toAlphaNumericString containerRegistryConnection.Name 50}}{{/toAlphaNumericString}}{{#shortGuid}}{{/shortGuid}}-auth'
-
-  # Agent VM image name
+  # Variables 
   vmImageName: 'ubuntu-latest'
+  imageName: 'pythonfunc'
+  repo: 'pythonfunc'
 
 stages:
 - stage: Build
@@ -30,47 +14,55 @@ stages:
     pool:
       vmImage: $(vmImageName)
     steps:
-    - task: Docker@2
-      displayName: Build and push an image to container registry
-      inputs:
-        command: buildAndPush
-        repository: $(imageRepository)
-        dockerfile: $(dockerfilePath)
-        containerRegistry: $(dockerRegistryServiceConnection)
-        tags: |
-          $(tag)
-          
-    - upload: manifests
-      artifact: manifests
+    - script: 'python -m pip install --upgrade pip && pip install -r requirements.txt'
+    displayName: 'Install dependencies'
 
-- stage: Deploy
+- stage: Deploy to dev
   displayName: Deploy stage
   dependsOn: Build
   jobs:
   - deployment: Deploy
     displayName: Deploy
     pool:
-      vmImage: $(vmImageName)
-    environment: '{{ k8sResource.EnvironmentReference.Name }}.{{ k8sResource.Name }}'
+      vmImage: ubuntu-latest
     strategy:
       runOnce:
         deploy:
           steps:
-          - task: KubernetesManifest@0
-            displayName: Create imagePullSecret
+
+          - task: AzureFunctionAppContainer@1
+            displayName: 'Azure Function App on Container Deploy: hellworldfunc'
             inputs:
-              action: createSecret
-              secretName: $(imagePullSecret)
-              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
-              
-          - task: KubernetesManifest@0
-            displayName: Deploy to Kubernetes cluster
+              azureSubscription: 'Visual Studio Enterprise with MSDN (92800e22-a5bd-44b1-a59a-2defd15e82d1)'
+              appName: hellworldfunc
+              deployToSlotOrASE: true
+              resourceGroupName: pythonv3
+              slotName: dev
+              imageName: 'zanicr.azurecr.io/pythonfunc:latest'
+
+  - stage: Deploy to UAT
+  displayName: Deploy stage uat
+  dependsOn: Build
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: AzureFunctionAppContainer@1
+            displayName: 'Azure Function App on Container Deploy: hellworldfunc'
             inputs:
-              action: deploy
-              manifests: |
-                $(Pipeline.Workspace)/manifests/deployment.yml
-                $(Pipeline.Workspace)/manifests/service.yml
-              imagePullSecrets: |
-                $(imagePullSecret)
-              containers: |
-                $(containerRegistry)/$(imageRepository):$(tag)
+              azureSubscription: 'Visual Studio Enterprise with MSDN (92800e22-a5bd-44b1-a59a-2defd15e82d1)'
+              appName: hellworldfunc
+              deployToSlotOrASE: true
+              resourceGroupName: pythonv3
+              slotName: uat
+              imageName: 'zanicr.azurecr.io/pythonfunc:latest'
+
+
+
+
